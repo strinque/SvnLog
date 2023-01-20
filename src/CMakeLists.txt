@@ -1,14 +1,20 @@
 cmake_minimum_required(VERSION 3.13)
 set(TARGET_MFC "SvnLog" CACHE INTERNAL "")
 
+# set required c++ version
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # set project source-files
 set(SOURCE_FILES
   SvnLog.cpp
   SvnLogDlg.cpp
+  SvnRepos.cpp
   pch.cpp)
 set(HEADER_FILES
   SvnLog.h
   SvnLogDlg.h
+  SvnRepos.h
   framework.h
   pch.h
   Resource.h

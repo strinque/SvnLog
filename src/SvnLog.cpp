@@ -24,8 +24,8 @@ BOOL CSvnLogApp::InitInstance()
 {
   CWinApp::InitInstance();
 
-	std::unique_ptr<CShellManager> pShellManager(new CShellManager);
-	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
+  std::unique_ptr<CShellManager> pShellManager(new CShellManager);
+  CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
 
   CSvnLogDlg dlg;
   m_pMainWnd = &dlg;
