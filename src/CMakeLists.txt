@@ -1,0 +1,66 @@
+cmake_minimum_required(VERSION 3.13)
+set(TARGET_MFC "SvnLog" CACHE INTERNAL "")
+
+# set project source-files
+set(SOURCE_FILES
+  SvnLog.cpp
+  SvnLogDlg.cpp
+  pch.cpp)
+set(HEADER_FILES
+  SvnLog.h
+  SvnLogDlg.h
+  framework.h
+  pch.h
+  Resource.h
+  targetver.h)
+set(RESOURCE_FILES
+  SvnLog.rc
+  res/program.ico
+  res/SvnLog.rc2)
+  
+if(MSVC)
+  # force utf-8 encoding for source-files
+  add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
+  add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
+
+  # set unicode
+  add_definitions(-DUNICODE)
+  add_definitions(-D_UNICODE)
+
+  # activate MFC in shared
+  add_definitions(-D_AFXDLL)
+  set(CMAKE_MFC_FLAG 2)
+endif()
+
+# compile executable
+add_executable(${TARGET_MFC} WIN32 ${SOURCE_FILES} ${HEADER_FILES} ${RESOURCE_FILES})
+
+# fix mfc winmain link issue for mfc unicode program
+set_target_properties(${TARGET_MFC} PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
+target_link_options(${TARGET_MFC} PRIVATE "/entry:wWinMainCRTStartup")
+
+# rename executable
+set_target_properties(${TARGET_MFC} PROPERTIES OUTPUT_NAME "SvnLog")
+
+# rename and pack executable
+add_custom_command(
+  TARGET ${TARGET_MFC} 
+  POST_BUILD 
+    COMMAND ${CMAKE_COMMAND} 
+      -D EXECUTE_POST_BUILD=$<CONFIG:Release>
+      -D TARGET_FILE="$<TARGET_FILE:${TARGET_MFC}>"
+      -D SELF_PACKER_FOR_EXECUTABLE="${CMAKE_PREFIX_PATH}/bin/upx.exe"
+      -P ${CMAKE_SOURCE_DIR}/cmake/PackExePostBuild.cmake)
+
+# install files
+install(TARGETS ${TARGET_MFC} EXPORT ${TARGET_MFC}Config
+  RUNTIME DESTINATION bin)
+
+# organize files for visual-studio
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+source_group("Resource File/" FILES
+  ${RESOURCE_FILES})
+source_group("Header File/" FILES
+  ${HEADER_FILES})
+source_group("Source File/" FILES
+  ${SOURCE_FILES})
