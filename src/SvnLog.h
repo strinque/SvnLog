@@ -11,6 +11,5 @@ public:
 
 public:
   virtual BOOL InitInstance();
-  DECLARE_MESSAGE_MAP()
 };
 extern CSvnLogApp theApp;

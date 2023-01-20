@@ -1,21 +1,31 @@
 #include "pch.h"
 #include "framework.h"
 #include <fstream>
+#include <sstream>
 #include <filesystem>
+#include <algorithm>
 #include <stdexcept>
-#include <cstdio>
-#include <utf8.h>
+#include <thread>
+#include <vector>
+#include <string>
+#include <regex>
+#include <set>
+#include <fmt/core.h>
+#include <winpp/win.hpp>
+#include <winpp/files.hpp>
+#include <winpp/utf8.hpp>
 #include "SvnRepos.h"
-
-// svn commit parser separator definitions
-const std::string commit_sep = "------------------------------------------------------------------------\r\n";
-const std::string commit_elem_sep = " | ";
-const std::string commit_path_sep = "Changed paths:\r\n";
+#include "DateConverter.h"
 
 // constructor
 SvnRepos::SvnRepos(const std::string& filename) :
   m_filename(filename),
-  m_commits(),
+  m_root_directory(),
+  m_running(true),
+  m_mutex(),
+  m_queue(),
+  m_processed_repos(),
+  m_cb(),
   m_repos()
 {
 }
@@ -26,7 +36,7 @@ SvnRepos::~SvnRepos()
 }
 
 // load svn repository database
-bool SvnRepos::load()
+bool SvnRepos::load(std::string& root_directory)
 {
   try
   {
@@ -38,34 +48,34 @@ bool SvnRepos::load()
     // parse json database
     const json& svn_db = json::parse(file);
 
+    // retrieve root directory
+    root_directory = utf8::from_utf8(svn_db["root_directory"].get<std::string>());
+
     // parse all repositories
-    const auto& repos_obj = svn_db["repos"];
-    for (const auto& r : repos_obj)
+    for (const auto& r : svn_db["repos"])
     {
-      // retrieve reposiroty infos
-      const std::string path = r["path"].get<std::string>();
+      // retrieve data from one repository
+      const std::string& path = utf8::from_utf8(r["path"].get<std::string>());
+      auto& repos = m_repos[path];
+      repos.url = utf8::from_utf8(r["url"].get<std::string>());
 
       // parse all commits
-      std::map<int, std::shared_ptr<struct svn_commit>> repos;
       const auto& commits_obj = r["commits"];
       for (const auto& c : commits_obj)
       {
         // retrieve commit infos
-        std::shared_ptr<struct svn_commit> commit = std::make_shared<struct svn_commit>(svn_commit{
-          from_utf8(path),
-          from_utf8(c["date"].get<std::string>()),
-          c["id"].get<int>(),
-          from_utf8(c["author"].get<std::string>()),
-          from_utf8(c["files"].get<std::string>()),
-          from_utf8(c["desc"].get<std::string>())});
-
+        const std::shared_ptr<struct svn_commit>& commit = std::make_shared<struct svn_commit>(
+          svn_commit{
+            DateConverter::to_time(c["date"].get<std::string>()),
+            c["id"].get<int>(),
+            utf8::from_utf8(c["author"].get<std::string>()),
+            utf8::from_utf8(c["desc"].get<std::string>())
+          });
+          
         // store commit infos
-        m_commits.insert(commit);
-        repos[commit->id] = commit;
+        repos.commits[commit->id] = commit;
       }
-      m_repos[path] = repos;
     }
-
     return true;
   }
   catch (...)
@@ -75,36 +85,40 @@ bool SvnRepos::load()
 }
 
 // save svn repository database
-bool SvnRepos::save()
+bool SvnRepos::save(const std::string& root_directory)
 {
   try
   {
+    // create json repositories format
+    json svn_db = {
+      {"root_directory", utf8::from_utf8(root_directory)},
+      {"repos", json::array()}
+    };
+
     // loop through all repositories
-    json svn_db;
-    auto& repos_array_obj = svn_db["repos"] = json::array();
     for (const auto& r : m_repos)
     {
       // create repository object
-      json repos_obj;
-      repos_obj["path"] = to_utf8(r.first);
-      repos_obj["last_commit"] = r.second.empty() ? "" : std::to_string(r.second.begin()->first);
+      json repos = {
+        {"path", utf8::to_utf8(r.first)},
+        {"url", utf8::to_utf8(r.second.url)},
+        {"commits", json::array()}
+      };
 
       // loop through all commits
-      auto& commits_obj = repos_obj["commits"] = json::array();
-      for (const auto& c : r.second)
+      for (const auto& c : r.second.commits)
       {
-        json commit_obj = {
-          {"date", c.second->date},
+        const json& commit = {
+          {"date", DateConverter::to_str(c.second->date)},
           {"id", c.second->id},
-          {"author", to_utf8(c.second->author)},
-          {"files", to_utf8(c.second->files)},
-          {"desc", to_utf8(c.second->desc)}
+          {"author", utf8::to_utf8(c.second->author)},
+          {"desc", utf8::to_utf8(c.second->desc)}
         };
-        commits_obj.push_back(commit_obj);
+        repos["commits"].push_back(commit);
       }
 
       // add repository to repos array
-      repos_array_obj.push_back(repos_obj);
+      svn_db["repos"].push_back(repos);
     }
 
     // save json to file
@@ -122,28 +136,27 @@ bool SvnRepos::save()
 }
 
 // scan directory recursively for svn repositories
-bool SvnRepos::scan_directory(const std::wstring& path)
+bool SvnRepos::scan_directory(const std::string& path)
 {
   try
   {
-    // loop through all subdirectories
-    std::set<std::string> svn_dirs;
-    for (const auto& p : std::filesystem::recursive_directory_iterator(path))
-    {
-      if (std::filesystem::is_directory(p) &&
-        (p.path().filename().u8string() == ".svn"))
-      {
-        const std::string& repos_path = p.path().u8string();
-        const std::size_t pos = repos_path.rfind("\\.svn");
-        svn_dirs.insert(repos_path.substr(0, pos));
-      }
-    }
+    // retrieve all svn repositories without nospy file
+    const auto& dir_filter = [](const std::filesystem::path& p) {
+      if(std::filesystem::is_directory(p) &&
+         std::filesystem::is_directory(std::filesystem::path(p.string() + "\\.svn")) &&
+         !std::filesystem::exists(std::filesystem::path(p.string() + "\\nospy")))
+        return true;
+      else
+        return false;
+    };
+    const auto& all_svn_dirs = files::get_dirs(path, files::infinite_depth, dir_filter);
+    std::set<std::filesystem::path> svn_dirs(all_svn_dirs.begin(), all_svn_dirs.end());
 
     // remove repos stored in database but not present in directories
     std::vector<std::string> to_remove;
     for (const auto& r : m_repos)
     {
-      if (svn_dirs.find(r.first) == svn_dirs.end())
+      if (svn_dirs.find(std::filesystem::path(r.first)) == svn_dirs.end())
         to_remove.push_back(r.first);
     }
     for (const auto& r : to_remove)
@@ -152,8 +165,8 @@ bool SvnRepos::scan_directory(const std::wstring& path)
     // add repos found in directories but not present on the database
     for (const auto& r : svn_dirs)
     {
-      if (m_repos.find(r) == m_repos.end())
-        m_repos[r];
+      if (m_repos.find(r.string()) == m_repos.end())
+        m_repos[r.string()];
     }
 
     return !m_repos.empty();
@@ -164,177 +177,175 @@ bool SvnRepos::scan_directory(const std::wstring& path)
   }
 }
 
-// get all the logs
+// get all the logs - threaded
 bool SvnRepos::get_logs(const std::function<void(std::size_t, std::size_t)>& cb)
+{
+  // create queue of logs to retrieve
+  m_processed_repos = 0;
+  m_queue = std::queue<std::pair<std::string, std::size_t>>();
+  for (const auto& r : m_repos)
+    m_queue.push({ r.first, r.second.commits.empty() ? 1 : r.second.commits.rbegin()->first });
+
+  // initialize progress-bar
+  m_cb = cb;
+  m_cb(0, m_repos.size());
+
+  // create and start all threads
+  const std::size_t nb_threads = std::min(m_repos.size(), static_cast<std::size_t>(std::thread::hardware_concurrency()) * 2);
+  std::vector<std::thread> threads(nb_threads);
+  for (auto& t : threads)
+    t = std::thread(&SvnRepos::run, this);
+
+  // wait for threads termination
+  for (auto& t : threads)
+    if (t.joinable())
+      t.join();
+
+  return m_processed_repos == m_repos.size();
+}
+
+// retrieve one commit
+const std::shared_ptr<struct svn_commit> SvnRepos::get_commit(const std::string& repos, int id) const
+{
+  // find repos
+  const auto& r = m_repos.find(repos);
+  if (r == m_repos.end())
+    throw std::runtime_error("can't find the repos");
+
+  // find commit
+  const auto& c = r->second.commits.find(id);
+  if (c == r->second.commits.end())
+    throw std::runtime_error("can't find the commit");
+  return c->second;
+}
+
+// retrieve all commits
+const std::map<std::string, struct svn_repos>& SvnRepos::get_commits() const
+{
+  return m_repos;
+}
+
+// display the show log dialog
+void SvnRepos::show_logs(const std::string& project, const int revision) const
+{
+  const std::string& cmd = fmt::format("TortoiseProc.exe {} {} {} {}",
+    "/command:log ",
+    fmt::format("/path:\"{}\" ", project),
+    fmt::format("/startrev:{} ", revision),
+    fmt::format("/endrev:{}", revision));
+  static_cast<void>(win::execute(cmd));
+}
+
+// thread task that try to read svn logs
+void SvnRepos::run()
+{
+  // process items from queue
+  while(m_running)
+  {
+    // retrieve item from queue
+    std::string repos;
+    std::size_t revision;
+    {
+      std::lock_guard<std::mutex> lck(m_mutex);
+      if (m_queue.empty())
+        break;
+      repos = m_queue.front().first;
+      revision = m_queue.front().second;
+      m_queue.pop();
+    }
+
+    // retrieve logs
+    const bool res = get_log(repos, revision);
+
+    // update progress-bar
+    {
+      std::lock_guard<std::mutex> lck(m_mutex);
+      if(res)
+        m_processed_repos++;
+      m_cb(m_processed_repos, m_repos.size());
+    }
+  }
+}
+
+// retrieve the log of one repository
+bool SvnRepos::get_log(const std::string& repos, const std::size_t revision)
 {
   try
   {
-    // get the logs of each repository
-    const std::size_t total = m_repos.size();
-    std::size_t idx = 0;
-    for (auto& r : m_repos)
+    // launch the svn get log command
+    // url: https://stackoverflow.com/questions/4881129/how-do-you-see-recent-svn-log-entries
+    std::string cmd = fmt::format("svn.exe log -r {}:HEAD \"{}\"", revision, repos);
+    std::string logs;
+    if (win::execute(cmd, logs) != 0)
+      return false;
+
+    // parse the svn commit output
+    std::vector<std::shared_ptr<struct svn_commit>> commits;
     {
-      // launch the svn get log command
-      // https://stackoverflow.com/questions/4881129/how-do-you-see-recent-svn-log-entries
-      std::string cmd = "svn.exe log ";
-      cmd += "-r HEAD:1 "; // sort logs
-      cmd += "-v "; // verbose mode
-      cmd += '"' + r.first + '"';
-      const std::string& logs = exec(cmd);
-
-      // parse logs
-      const std::vector<std::shared_ptr<struct svn_commit>>& commits = parse(r.first, logs);
-      for (const auto& c : commits)
+      std::string commit_separator(72, '-');
+      std::regex r(R"(^r(\d+) \| (.*?) \| (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) .*\r\n\r\n([\s\S]*))");
+      std::cmatch cm;
+      std::istringstream ss(logs);
+      std::string commit_lines;
+      std::string line;
+      while (std::getline(ss, line))
       {
-        if (r.second.find(c->id) == r.second.end())
+        if (line.find(commit_separator) != std::string::npos)
         {
-          r.second[c->id] = c;
-          m_commits.insert(c);
+          // parse commit using regex
+          if (std::regex_search(commit_lines.c_str(), cm, r))
+          {
+            const std::time_t date = DateConverter::to_time(cm.str(3));
+            const int id = std::stoi(cm.str(1));
+            const std::string& author = cm.str(2);
+            const std::string& desc = cm.str(4);
+            commits.push_back(std::make_shared<struct svn_commit>(svn_commit{ date, id, author, desc }));
+          }
+          commit_lines.clear();
         }
+        else
+          commit_lines += line + "\n";
       }
-
-      // call the update callback
-      if (cb)
-        cb(++idx, total);
     }
+
+    // retrieve repository url
+    cmd = fmt::format("svn.exe info \"{}\"", repos);
+    if (win::execute(cmd, logs) != 0)
+      return false;
+
+    // parse the svn info output
+    std::string url;
+    {
+      // extract the url
+      std::regex r(R"(^URL: (.*))");
+      std::cmatch cm;
+      if (!std::regex_search(logs.c_str(), cm, r))
+        return false;
+
+      // convert escape sequence of URL
+      CHAR buf[1024];
+      DWORD buf_size;
+      std::string encoded_url = cm.str(1);
+      buf_size = (sizeof(buf) / sizeof(char)) - 1;
+      if (UrlUnescapeA(encoded_url.data(), buf, &buf_size, URL_UNESCAPE) == S_OK)
+        url = utf8::from_utf8(buf);
+    }
+
+    // update database - protected by mutex
+    std::lock_guard<std::mutex> lck(m_mutex);
+    const auto& it = m_repos.find(repos);
+    if (it != m_repos.end())
+    {
+      it->second.url = url;
+      for (const auto& c : commits)
+        if (it->second.commits.find(c->id) == it->second.commits.end())
+          it->second.commits[c->id] = c;
+    }
+
     return true;
   }
   catch (...)
   {
     return false;
   }
-}
-
-// retrieve all the commits
-const std::set<std::shared_ptr<struct svn_commit>> SvnRepos::get_commits() const
-{
-  return m_commits;
-}
-
-// retrieve one commit
-const std::shared_ptr<struct svn_commit> SvnRepos::get_commit(const std::string& repos, int id)
-{
-  // find repos
-  const auto& r = m_repos.find(repos);
-  if (r == m_repos.end())
-    throw std::exception("can't find the repos");
-
-  // find commit
-  const auto& c = r->second.find(id);
-  if (c == r->second.end())
-    throw std::exception("can't find the commit");
-  return c->second;
-}
-
-// execute command and read output
-std::string SvnRepos::exec(const std::string& cmd)
-{
-  // convert from string to wide_string
-  wchar_t cmd_wide[MAX_PATH];
-  wcsncpy_s(cmd_wide, MAX_PATH, CString(CStringA(cmd.c_str())).GetString(), MAX_PATH);
-
-  // configure handles for stdout
-  HANDLE hStdOutPipeRead = NULL;
-  HANDLE hStdOutPipeWrite = NULL;
-  SECURITY_ATTRIBUTES sa{ sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
-  if (!CreatePipe(&hStdOutPipeRead, &hStdOutPipeWrite, &sa, 0))
-    throw std::exception("can't create pipes");
-
-  // create and execute the process
-  STARTUPINFO si{};
-  GetStartupInfo(&si);
-  si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
-  si.wShowWindow = SW_HIDE;
-  si.hStdOutput = hStdOutPipeWrite;
-  PROCESS_INFORMATION pi{};
-  if (!CreateProcess(NULL, cmd_wide, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
-  {
-    CloseHandle(hStdOutPipeRead);
-    throw std::exception("can't start program");
-  }
-  CloseHandle(hStdOutPipeWrite);
-
-  // read program stdout
-  std::string output;
-  char buf[4096];
-  DWORD bytes = 0;
-  while (ReadFile(hStdOutPipeRead, buf, sizeof(buf) - 1, &bytes, NULL) && bytes)
-  {
-    buf[bytes] = 0;
-    output += buf;
-  }
-
-  // read exit code
-  DWORD exit_code = 0;
-  GetExitCodeProcess(pi.hProcess, &exit_code);
-
-  // cleanup
-  CloseHandle(pi.hProcess);
-  CloseHandle(pi.hThread);
-  CloseHandle(hStdOutPipeRead);
-
-  // check exit-code
-  if (exit_code != 0)
-    throw std::exception("program execution failed");
-
-  return output;
-}
-
-// parse svn log output
-std::vector<std::shared_ptr<struct svn_commit>> SvnRepos::parse(const std::string& repos, const std::string& logs)
-{
-  // find the start of a commit
-  std::size_t pos = 0;
-  std::size_t pos_e = 0;
-  std::vector<std::shared_ptr<struct svn_commit>> commits;
-  while ((pos = logs.find(commit_sep, pos)) != std::string::npos)
-  {
-    // parse id
-    pos += commit_sep.size();
-    pos_e = logs.find(commit_elem_sep, pos);
-    if (pos_e == std::string::npos)
-      break;
-    const int id = std::stoi(logs.substr(pos+1, pos_e - pos - 1));
-    pos = pos_e + commit_elem_sep.size();
-
-    // parse author
-    pos_e = logs.find(commit_elem_sep, pos);
-    if (pos_e == std::string::npos)
-      break;
-    const std::string& author = logs.substr(pos, pos_e - pos);
-    pos = pos_e + commit_elem_sep.size();
-
-    // parse date
-    pos_e = logs.find(commit_elem_sep, pos);
-    if (pos_e == std::string::npos)
-      break;
-    const std::string& date = logs.substr(pos, strlen("xxxx-xx-xx xx:xx:xx"));
-    pos = pos_e + commit_elem_sep.size();
-
-    // parse files
-    pos_e = logs.find(commit_path_sep, pos);
-    if (pos_e == std::string::npos)
-      break;
-    pos = pos_e + commit_path_sep.size();
-    pos_e = logs.find("\r\n\r\n", pos);
-    if (pos_e == std::string::npos)
-      break;
-    const std::string& files = logs.substr(pos, pos_e - pos);
-    pos = pos_e + 4;
-
-    // parse commit description
-    pos_e = logs.find(commit_sep, pos);
-    if (pos_e == std::string::npos)
-      break;
-    const std::string& desc = logs.substr(pos, pos_e - pos);
-
-    // add to commit list
-    commits.push_back(std::make_shared<struct svn_commit>(svn_commit{ repos,
-                                                                      date,
-                                                                      id, 
-                                                                      author,
-                                                                      files,
-                                                                      desc }));
-  }
-  return commits;
 }

@@ -4,81 +4,53 @@
 #include "SvnLogDlg.h"
 #include "afxdialogex.h"
 
-#ifdef _DEBUG
-#define new DEBUG_NEW
-#endif
-
 // include flat design manifest
 #pragma comment(linker,"\"/manifestdependency:type='win32' \
-name='Microsoft.Windows.Common-Controls' \
-version='6.0.0.0' \
-processorArchitecture='*' \
-publicKeyToken='6595b64144ccf1df' \
-language='*'\"") 
+name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
-// size in pixel of list-control headers
-#define LIST_CTRL_HEADER_DATE       135
-#define LIST_CTRL_HEADER_AUTHOR     175
-#define LIST_CTRL_HEADER_ID         70
-
-void CAutoListCtrl::AddColumn(const CString& text, uint16_t flag, int size)
+// convert CString to string
+const std::string to_string(const CString& str)
 {
-  // add empty column (to allow the center flag of the first header)
-  if (m_size.empty())
-    InsertColumn(0, _T(""), 0);
-
-  // add the column without size and store it
-  InsertColumn(static_cast<int>(m_size.size()+1), text, flag, size);
-  m_size.push_back(size);
+  return CStringA(str).GetString();
 }
 
-void CAutoListCtrl::Validate()
+// convert string to CString
+const CString to_cstring(const std::string& str)
 {
-  if (m_size.empty())
-    return;
-  DeleteColumn(0);
-  for (int i = 0; i < m_size.size(); ++i)
-    SetColumnWidth(i, (m_size[i] == LVSCW_AUTOSIZE) ? GetWidth() : static_cast<int>(m_size[i]));
+  return CString(str.c_str());
 }
 
-BEGIN_MESSAGE_MAP(CAutoListCtrl, CListCtrl)
-  ON_WM_SIZE()
-END_MESSAGE_MAP()
+// CListCtrl headers id
+enum HEADER {
+  HEADER_DATE = 0,
+  HEADER_AUTHOR,
+  HEADER_PROJECT,
+  HEADER_REPOS,
+  HEADER_REVISION
+};
 
-void CAutoListCtrl::OnSize(UINT nType, int cx, int cy)
-{
-  CListCtrl::OnSize(nType, cx, cy);
-  for (int i = 0; i < m_size.size(); ++i)
-    if (m_size[i] == LVSCW_AUTOSIZE)
-      SetColumnWidth(i, GetWidth());
-}
-
-int CAutoListCtrl::GetWidth() const
-{
-  int width;
-  CRect rc;
-  GetClientRect(&rc);
-  width = rc.Width();
-  for (auto& s : m_size)
-    width -= (s != LVSCW_AUTOSIZE) ? s : 0;
-  return width;
-}
-
-CSvnLogDlg::CSvnLogDlg(CWnd* pParent /*=nullptr*/)
+CSvnLogDlg::CSvnLogDlg(CWnd* pParent)
   : CDialog(IDD_SVNLOG_DIALOG, pParent),
   m_hIcon(),
   m_rcDlg(),
   m_editColor(),
-  m_path_ctrl(),
+  m_path_ctrl(WM_BROWSE_CTRL_UPDATE),
   m_path(),
   m_list_ctrl(),
+  m_date_from(),
+  m_date_to(),
+  m_combo_project(),
+  m_combo_author(),
   m_edit(),
   m_progress(),
+  m_commits(),
   m_repos(),
   m_thread(),
   m_mutex(),
   m_cv(),
-  m_task(UNDEF)
+  m_task(Task::Undefined),
+  m_locked(false)
 {
   m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 
@@ -89,11 +61,9 @@ CSvnLogDlg::CSvnLogDlg(CWnd* pParent /*=nullptr*/)
 CSvnLogDlg::~CSvnLogDlg()
 {
   // wait for thread termination properly
+  Notify(Task::Terminate);
   if (m_thread.joinable())
-  {
-    Notify(TERMINATE);
     m_thread.join();
-  }
 }
 
 void CSvnLogDlg::DoDataExchange(CDataExchange* pDX)
@@ -101,6 +71,10 @@ void CSvnLogDlg::DoDataExchange(CDataExchange* pDX)
   CDialog::DoDataExchange(pDX);
   DDX_Control(pDX, IDC_MFCEDITBROWSE, m_path_ctrl);
   DDX_Control(pDX, IDC_LIST, m_list_ctrl);
+  DDX_Control(pDX, IDC_DATETIMEPICKER_FROM, m_date_from);
+  DDX_Control(pDX, IDC_DATETIMEPICKER_TO, m_date_to);
+  DDX_Control(pDX, IDC_COMBO_PROJECT, m_combo_project);
+  DDX_Control(pDX, IDC_COMBO_AUTHOR, m_combo_author);
   DDX_Text(pDX, IDC_EDIT, m_edit);
   DDX_Control(pDX, IDC_PROGRESS, m_progress);
 }
@@ -112,10 +86,22 @@ BEGIN_MESSAGE_MAP(CSvnLogDlg, CDialog)
   ON_WM_QUERYDRAGICON()
   ON_WM_GETMINMAXINFO()
   ON_WM_CTLCOLOR()
-  ON_EN_CHANGE(IDC_MFCEDITBROWSE, &CSvnLogDlg::OnPathChange)
+  ON_WM_SETCURSOR()
   ON_NOTIFY(LVN_ITEMCHANGED, IDC_LIST, &CSvnLogDlg::OnItemchangedList)
-  ON_MESSAGE(WM_UPDATE_PROGRESS, &CSvnLogDlg::OnUpdateProgress)
-  ON_MESSAGE(WM_POSTMESSAGE, &CSvnLogDlg::OnGetPostMessage)
+  ON_NOTIFY(NM_CLICK, IDC_LIST, &CSvnLogDlg::OnItemClickList)
+  ON_NOTIFY(LVN_GETDISPINFO, IDC_LIST, &CSvnLogDlg::OnGetInfoList)
+  ON_BN_CLICKED(IDC_BUTTON_REFRESH, &CSvnLogDlg::OnBnClickedButtonRefresh)
+  ON_BN_CLICKED(IDC_CHECK_FROM, &CSvnLogDlg::OnBnClickedCheckFrom)
+  ON_BN_CLICKED(IDC_CHECK_TO, &CSvnLogDlg::OnBnClickedCheckTo)
+  ON_BN_CLICKED(IDC_CHECK_PROJECT, &CSvnLogDlg::OnBnClickedCheckProject)
+  ON_BN_CLICKED(IDC_CHECK_AUTHOR, &CSvnLogDlg::OnBnClickedCheckAuthor)
+  ON_CBN_SELENDOK(IDC_COMBO_AUTHOR, &CSvnLogDlg::OnComboAuthorChanged)
+  ON_CBN_SELENDOK(IDC_COMBO_PROJECT, &CSvnLogDlg::OnComboProjectChanged)
+  ON_NOTIFY(DTN_DATETIMECHANGE, IDC_DATETIMEPICKER_FROM, &CSvnLogDlg::OnDateFromChanged)
+  ON_NOTIFY(DTN_DATETIMECHANGE, IDC_DATETIMEPICKER_TO, &CSvnLogDlg::OnDateToChanged)
+  ON_REGISTERED_MESSAGE(WM_BROWSE_CTRL_UPDATE, &CSvnLogDlg::OnPathChanged)
+  ON_REGISTERED_MESSAGE(WM_UPDATE_PROGRESS_BAR, &CSvnLogDlg::OnUpdateProgress)
+  ON_REGISTERED_MESSAGE(WM_POST_MESSAGE_QUEUE, &CSvnLogDlg::OnGetPostMessage)
 END_MESSAGE_MAP()
 #pragma warning(pop)
 
@@ -128,12 +114,14 @@ BOOL CSvnLogDlg::OnInitDialog()
   SetIcon(m_hIcon, FALSE);  // set small icon
 
   // configure list control
-  m_list_ctrl.SetExtendedStyle(m_list_ctrl.GetExtendedStyle() | LVS_EX_FULLROWSELECT);
-  m_list_ctrl.AddColumn(_T("Date"), LVCFMT_CENTER, LIST_CTRL_HEADER_DATE);
-  m_list_ctrl.AddColumn(_T("Author"), LVCFMT_CENTER, LIST_CTRL_HEADER_AUTHOR);
-  m_list_ctrl.AddColumn(_T("Svn Repository"), LVCFMT_LEFT, LVSCW_AUTOSIZE);
-  m_list_ctrl.AddColumn(_T("Commit ID"), LVCFMT_CENTER, LIST_CTRL_HEADER_ID);
-  m_list_ctrl.Validate();
+  const std::vector<struct header_info> headers = {
+    {HEADER_DATE, L"Date", LVCFMT_CENTER, 125},
+    {HEADER_AUTHOR, L"Author", LVCFMT_CENTER, 120},
+    {HEADER_PROJECT, L"Project Path", LVCFMT_LEFT, LVSCW_AUTOSIZE},
+    {HEADER_REPOS, L"Repository Url", LVCFMT_LEFT, 500},
+    {HEADER_REVISION, L"Revision", LVCFMT_RIGHT, 55}
+  };
+  m_list_ctrl.SetHeaders(headers);
 
   // set edit color
   m_editColor.CreateSolidBrush(RGB(255, 255, 255));
@@ -142,13 +130,18 @@ BOOL CSvnLogDlg::OnInitDialog()
   GetWindowRect(&m_rcDlg);
   m_rcDlg -= m_rcDlg.TopLeft();
 
-  // lock the mfc-controls and load the svn-repository
-  LockCtrl(IDC_MFCEDITBROWSE);
-  m_progress.ShowWindow(SW_SHOW);
-  Notify(LOAD);
+  // set refresh button icon
+  static_cast<CButton*>(GetDlgItem(IDC_BUTTON_REFRESH))->SetIcon(static_cast<HICON>(
+    LoadImage(AfxGetApp()->m_hInstance,
+      MAKEINTRESOURCE(IDI_ICON_REFRESH),
+      (WPARAM)IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR)));
 
-  // add min/close buttons
-  SetWindowLong(this->m_hWnd, GWL_STYLE, GetWindowLong(m_hWnd, GWL_STYLE) | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+  // lock the mfc-controls and load the svn-repository
+  LockCtrl({ IDC_MFCEDITBROWSE, IDC_BUTTON_REFRESH });
+  Notify(Task::Load);
+
+  // add min/close buttons and resizable windows
+  SetWindowLong(this->m_hWnd, GWL_STYLE, GetWindowLong(m_hWnd, GWL_STYLE) | WS_OVERLAPPEDWINDOW);
   return TRUE;  // return TRUE  unless you set the focus to a control
 }
 
@@ -206,32 +199,193 @@ HBRUSH CSvnLogDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
   return hbr;
 }
 
-void CSvnLogDlg::OnPathChange()
+BOOL CSvnLogDlg::OnSetCursor(CWnd* pWnd, UINT nHitTest, UINT message)
 {
-  // retrieve path from control
-  CString str;
-  m_path_ctrl.GetWindowTextW(str);
+  if (m_locked)
   {
-    std::lock_guard<std::mutex> lck(m_mutex);
-    m_path = str.GetString();
+    ::SetCursor(AfxGetApp()->LoadStandardCursor(IDC_WAIT));
+    return TRUE;
   }
-  
-  // notify thread to begin scan
-  LockCtrl(IDC_MFCEDITBROWSE);
-  Notify(SCAN);
+  return CDialog::OnSetCursor(pWnd, nHitTest, message);
 }
 
 void CSvnLogDlg::OnItemchangedList(NMHDR* pNMHDR, LRESULT* pResult)
 {
   LPNMLISTVIEW pNMLV = reinterpret_cast<LPNMLISTVIEW>(pNMHDR);
   *pResult = 0;
+
   if (pNMLV && (pNMLV->uNewState & LVIS_SELECTED))
   {
-    USES_CONVERSION;
-    m_edit = CString(m_repos.get_commit(W2CA(m_list_ctrl.GetItemText(pNMLV->iItem, 2)), 
-                                        _ttoi(m_list_ctrl.GetItemText(pNMLV->iItem, 3)))->desc.c_str());
+    // set commit log infos on control
+    const CString& project = m_list_ctrl.GetItemText(pNMLV->iItem, HEADER_PROJECT);
+    const CString& revision = m_list_ctrl.GetItemText(pNMLV->iItem, HEADER_REVISION);
+    const auto& commit = m_repos.get_commit(to_string(project),
+                                            std::atoi(to_string(revision).c_str()));
+    m_edit = commit->desc.c_str();
     UpdateData(FALSE);
   }
+}
+
+void CSvnLogDlg::OnItemClickList(NMHDR* pNMHDR, LRESULT* pResult)
+{
+  LPNMITEMACTIVATE pNMItemActivate = reinterpret_cast<LPNMITEMACTIVATE>(pNMHDR);
+  *pResult = 0;
+
+  // display log infos when url is selected
+  if ((pNMItemActivate->iItem != -1) &&
+      (pNMItemActivate->iSubItem == HEADER_REPOS))
+  {
+    const CString& project = m_list_ctrl.GetItemText(pNMItemActivate->iItem, HEADER_PROJECT);
+    const CString& revision = m_list_ctrl.GetItemText(pNMItemActivate->iItem, HEADER_REVISION);
+    m_repos.show_logs(to_string(project),
+                      std::atoi(to_string(revision).c_str()));
+  }
+}
+
+// this function is called when the virtual list needs data
+void CSvnLogDlg::OnGetInfoList(NMHDR* pNMHDR, LRESULT* pResult)
+{
+  LV_DISPINFO* pDispInfo = reinterpret_cast<LV_DISPINFO*>(pNMHDR);
+  *pResult = 0;
+
+  // update the list if needed
+  LV_ITEM* item = &(pDispInfo)->item;
+  if (item->mask & LVIF_TEXT)
+  {
+    const auto& commit = m_commits.get_commit(item->iItem);
+    switch (item->iSubItem)
+    {
+    case HEADER_DATE:
+      static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->date_str), item->cchTextMax));
+      break;
+    case HEADER_AUTHOR:
+      static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->author), item->cchTextMax));
+      break;
+    case HEADER_PROJECT:
+      static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->repos), item->cchTextMax));
+      break;
+    case HEADER_REPOS:
+      static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->url), item->cchTextMax));
+      break;
+    case HEADER_REVISION:
+      static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->id_str), item->cchTextMax));
+      break;
+    default:
+      break;
+    }
+  }
+}
+
+void CSvnLogDlg::OnBnClickedButtonRefresh()
+{
+  OnPathChanged(0, 0);
+}
+
+void CSvnLogDlg::OnBnClickedCheckFrom()
+{
+  const bool is_checked = (IsDlgButtonChecked(IDC_CHECK_FROM) == BST_CHECKED);
+  if (is_checked)
+  {
+    SYSTEMTIME lp;
+    m_date_from.GetTime(&lp);
+    m_commits.enable_filter_from(lp);
+  }
+  else
+    m_commits.disable_filter_from();
+  m_date_from.EnableWindow(is_checked);
+  UpdateGui();
+}
+
+void CSvnLogDlg::OnBnClickedCheckTo()
+{
+  const bool is_checked = (IsDlgButtonChecked(IDC_CHECK_TO) == BST_CHECKED);
+  if (is_checked)
+  {
+    SYSTEMTIME lp;
+    m_date_to.GetTime(&lp);
+    m_commits.enable_filter_to(lp);
+  }
+  else
+    m_commits.disable_filter_to();
+  m_date_to.EnableWindow(is_checked);
+  UpdateGui();
+}
+
+void CSvnLogDlg::OnBnClickedCheckProject()
+{
+  const bool is_checked = (IsDlgButtonChecked(IDC_CHECK_PROJECT) == BST_CHECKED);
+  if (!is_checked)
+  {
+    m_commits.disable_filter_project();
+    m_combo_project.SetCurSel(-1);
+  }
+  m_combo_project.EnableWindow(is_checked);
+  UpdateGui();
+}
+
+void CSvnLogDlg::OnBnClickedCheckAuthor()
+{
+  const bool is_checked = (IsDlgButtonChecked(IDC_CHECK_AUTHOR) == BST_CHECKED);
+  if (!is_checked)
+  {
+    m_commits.disable_filter_author();
+    m_combo_author.SetCurSel(-1);
+  }
+  m_combo_author.EnableWindow(is_checked);
+  UpdateGui();
+}
+
+void CSvnLogDlg::OnComboAuthorChanged()
+{
+  if (m_combo_author.GetCurSel() != -1)
+  {
+    CString str;
+    m_combo_author.GetLBText(m_combo_author.GetCurSel(), str);
+    m_commits.enable_filter_author(to_string(str));
+    UpdateGui();
+  }
+}
+
+void CSvnLogDlg::OnComboProjectChanged()
+{
+  if (m_combo_project.GetCurSel() != -1)
+  {
+    CString str;
+    m_combo_project.GetLBText(m_combo_project.GetCurSel(), str);
+    m_commits.enable_filter_project(to_string(str));
+    UpdateGui();
+  }
+}
+
+void CSvnLogDlg::OnDateFromChanged(NMHDR* pNMHDR, LRESULT* pResult)
+{
+  LPNMDATETIMECHANGE pDTChange = reinterpret_cast<LPNMDATETIMECHANGE>(pNMHDR);
+  *pResult = 0;
+  m_commits.enable_filter_from(pDTChange->st);
+  UpdateGui();
+}
+
+void CSvnLogDlg::OnDateToChanged(NMHDR* pNMHDR, LRESULT* pResult)
+{
+  LPNMDATETIMECHANGE pDTChange = reinterpret_cast<LPNMDATETIMECHANGE>(pNMHDR);
+  *pResult = 0;
+  m_commits.enable_filter_to(pDTChange->st);
+  UpdateGui();
+}
+
+LRESULT CSvnLogDlg::OnPathChanged(WPARAM wparam, LPARAM lparam)
+{
+  // unused arguments
+  static_cast<void>(wparam);
+  static_cast<void>(lparam);
+
+  // retrieve path from control
+  m_path_ctrl.GetWindowText(m_path);
+
+  // notify thread to begin scan
+  LockCtrl();
+  Notify(Task::Scan);
+  return 0;
 }
 
 LRESULT CSvnLogDlg::OnUpdateProgress(WPARAM wparam, LPARAM lparam)
@@ -242,34 +396,36 @@ LRESULT CSvnLogDlg::OnUpdateProgress(WPARAM wparam, LPARAM lparam)
 
 LRESULT CSvnLogDlg::OnGetPostMessage(WPARAM wparam, LPARAM lparam)
 {
-  const enum result res = static_cast<enum result>(wparam);
-  switch (res)
+  const bool result = static_cast<bool>(wparam);
+  switch (m_task)
   {
-  case LOAD_FAILURE:
-  case LOAD_SUCCESS:
-    UnlockCtrl(IDC_MFCEDITBROWSE);
-    UpdateListCtrl();
+  case Task::Load:
+    if (result)
+    {
+      UnlockCtrl();
+      UpdateGui(true);
+    }
+    else
+      UnlockCtrl({ IDC_MFCEDITBROWSE });
     break;
-  case SAVE_FAILURE:
-  case SAVE_SUCCESS:
+
+  case Task::Save:
     break;
-  case SCAN_FAILURE:
-    UnlockCtrl(IDC_MFCEDITBROWSE);
+
+  case Task::Scan:
+    if (result)
+      Notify(Task::GetLogs);
+    else
+      UnlockCtrl();
     break;
-  case SCAN_SUCCESS:
-    Notify(GET_LOGS);
+
+  case Task::GetLogs:
+    if (result)
+      Notify(Task::Save);
+    UnlockCtrl();
+    UpdateGui(true);
     break;
-  case GET_LOGS_FAILURE:
-    UnlockCtrl(IDC_MFCEDITBROWSE);
-    m_progress.ShowWindow(SW_HIDE);
-    m_list_ctrl.DeleteAllItems();
-    break;
-  case GET_LOGS_SUCCESS:
-    UnlockCtrl(IDC_MFCEDITBROWSE);
-    m_progress.ShowWindow(SW_HIDE);
-    UpdateListCtrl();
-    Notify(SAVE);
-    break;
+
   default:
     break;
   }
@@ -279,7 +435,6 @@ LRESULT CSvnLogDlg::OnGetPostMessage(WPARAM wparam, LPARAM lparam)
 void CSvnLogDlg::Run()
 {
   volatile bool terminate = false;
-  enum result res = UNDEFINED;
   std::unique_lock<std::mutex> lck(m_mutex);
   while (!terminate)
   {
@@ -287,50 +442,43 @@ void CSvnLogDlg::Run()
     m_cv.wait(lck);
 
     // execute request
+    bool result = false;
     switch (m_task)
     {
-    case LOAD:
-      if (!m_repos.load())
-        res = LOAD_FAILURE;
-      else
-        res = LOAD_SUCCESS;
+    case Task::Load:
+      {
+        std::string path;
+        result = m_repos.load(path);
+        m_path = to_cstring(path);
+      }
       break;
 
-    case SAVE:
-      if (!m_repos.save())
-        res = SAVE_FAILURE;
-      else
-        res = SAVE_SUCCESS;
+    case Task::Save:
+      result = m_repos.save(to_string(m_path));
       break;
 
-    case SCAN:
-      if (!m_repos.scan_directory(m_path))
-        res = SCAN_FAILURE;
-      else
-        res = SCAN_SUCCESS;
+    case Task::Scan:
+      result = m_repos.scan_directory(to_string(m_path));
       break;
     
-    case GET_LOGS:
+    case Task::GetLogs:
     {
       // create callback to update progress-bar
       std::function<void(std::size_t, std::size_t)> update_cb = [this](std::size_t idx, std::size_t total)
       {
         static std::size_t old_val = -1;
-        const std::size_t val = static_cast<std::size_t>(idx * 100 / total);
+        const std::size_t val = total ? static_cast<std::size_t>(idx * 100 / total) : 0;
         if (val != old_val)
         {
-          ::PostMessage(m_hWnd, WM_UPDATE_PROGRESS, static_cast<WPARAM>(val), 0);
+          ::PostMessage(m_hWnd, WM_UPDATE_PROGRESS_BAR, static_cast<WPARAM>(val), 0);
           old_val = val;
         }
       };
-      if (!m_repos.get_logs(update_cb))
-        res = GET_LOGS_FAILURE;
-      else
-        res = GET_LOGS_SUCCESS;
+      result = m_repos.get_logs(update_cb);
       break;
     }
 
-    case TERMINATE:
+    case Task::Terminate:
       terminate = true;
       break;
 
@@ -340,11 +488,11 @@ void CSvnLogDlg::Run()
 
     // update gui and state-machine
     if (!terminate)
-      ::PostMessage(m_hWnd, WM_POSTMESSAGE, static_cast<WPARAM>(res), 0);
+      ::PostMessage(m_hWnd, WM_POST_MESSAGE_QUEUE, static_cast<WPARAM>(result), 0);
   }
 }
 
-void CSvnLogDlg::Notify(const enum tasks task)
+void CSvnLogDlg::Notify(const enum class Task task)
 {
   // update state
   {
@@ -356,45 +504,83 @@ void CSvnLogDlg::Notify(const enum tasks task)
   m_cv.notify_one();
 }
 
-void CSvnLogDlg::LockCtrl(const uint32_t id)
+void CSvnLogDlg::OnOK()
 {
-  if (!id)
+  OnPathChanged(0, 0);
+}
+
+void CSvnLogDlg::LockCtrl(const std::vector<uint32_t>& handles)
+{
+  m_locked = true;
+  if (handles.empty())
   {
+    GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(FALSE);
+    GetDlgItem(IDC_BUTTON_REFRESH)->EnableWindow(FALSE);
+    GetDlgItem(IDC_CHECK_FROM)->EnableWindow(FALSE);
+    GetDlgItem(IDC_CHECK_TO)->EnableWindow(FALSE);
+    GetDlgItem(IDC_CHECK_PROJECT)->EnableWindow(FALSE);
+    GetDlgItem(IDC_CHECK_AUTHOR)->EnableWindow(FALSE);
     GetDlgItem(IDC_LIST)->EnableWindow(FALSE);
     GetDlgItem(IDC_EDIT)->EnableWindow(FALSE);
-    GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(FALSE);
+    GetDlgItem(IDC_PROGRESS)->EnableWindow(FALSE);
   }
   else
-    GetDlgItem(id)->EnableWindow(FALSE);
-  Invalidate(TRUE);
-  UpdateWindow();
+  {
+    for (const auto& i : handles)
+      GetDlgItem(i)->EnableWindow(FALSE);
+  }
 }
 
-void CSvnLogDlg::UnlockCtrl(const uint32_t id)
+void CSvnLogDlg::UnlockCtrl(const std::vector<uint32_t>& handles)
 {
-  if (!id)
+  m_locked = false;
+  if (handles.empty())
   {
+    GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(TRUE);
+    GetDlgItem(IDC_BUTTON_REFRESH)->EnableWindow(TRUE);
+    GetDlgItem(IDC_CHECK_FROM)->EnableWindow(TRUE);
+    GetDlgItem(IDC_CHECK_TO)->EnableWindow(TRUE);
+    GetDlgItem(IDC_CHECK_PROJECT)->EnableWindow(TRUE);
+    GetDlgItem(IDC_CHECK_AUTHOR)->EnableWindow(TRUE);
     GetDlgItem(IDC_LIST)->EnableWindow(TRUE);
     GetDlgItem(IDC_EDIT)->EnableWindow(TRUE);
-    GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(TRUE);
+    GetDlgItem(IDC_PROGRESS)->EnableWindow(TRUE);
   }
   else
-    GetDlgItem(id)->EnableWindow(TRUE);
+  {
+    for (const auto& i : handles)
+      GetDlgItem(i)->EnableWindow(TRUE);
+  }
 }
 
-void CSvnLogDlg::UpdateListCtrl()
+void CSvnLogDlg::UpdateGui(const bool update_commits)
 {
+  // sort and filter commits - disable redraw CListCtrl between updates
+  m_list_ctrl.SetRedraw(false);
   m_list_ctrl.DeleteAllItems();
+  if (update_commits)
   {
-    int idx = 0;
-    const std::set<std::shared_ptr<struct svn_commit>>& commits = m_repos.get_commits();
-    for (const auto& c : commits)
-    {
-      m_list_ctrl.InsertItem(idx, CString(c->date.c_str()));
-      m_list_ctrl.SetItemText(idx, 1, CString(c->author.c_str()));
-      m_list_ctrl.SetItemText(idx, 2, CString(c->repos.c_str()));
-      m_list_ctrl.SetItemText(idx, 3, CString(std::to_string(c->id).c_str()));
-      ++idx;
-    }
+    // sort commits
+    m_commits.set_commits(m_repos.get_commits());
+
+    // reset project combobox with all available projects
+    m_combo_project.ResetContent();
+    for (const auto& p : m_commits.get_projects())
+      m_combo_project.AddString(to_cstring(p));
+
+    // reset author combobox with all available authors
+    m_combo_author.ResetContent();
+    for (const auto& a : m_commits.get_authors())
+      m_combo_author.AddString(to_cstring(a));
   }
+  m_commits.filter_commits();
+  m_list_ctrl.SetItemCount(static_cast<int>(m_commits.get_commits().size()));
+  m_list_ctrl.ClearItemSelection();
+  m_list_ctrl.SetRedraw(true);
+
+  // update gui
+  m_edit.Empty();
+  m_path_ctrl.SetText(m_path);
+  m_progress.SetPos(0);
+  UpdateData(FALSE);
 }

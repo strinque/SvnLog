@@ -4,38 +4,24 @@
       "name": "x64-debug",
       "generator": "Ninja",
       "configurationType": "Debug",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
-      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "buildRoot": "${projectDir}\\build\\${name}",
       "installRoot": "${projectDir}\\x64-windows\\debug",
-      "cmakeCommandArgs": "",
-      "buildCommandArgs": "",
-      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
       "variables": [
-        {
-          "name": "CMAKE_PREFIX_PATH",
-          "value": "${projectDir}\\x64-windows"
-        },
-        {
-          "name": "CMAKE_DEBUG_POSTFIX",
-          "value": "d"
-        }
+        { "name": "VCPKG_TARGET_TRIPLET", "value": "x64-windows" },
+        { "name": "CMAKE_TOOLCHAIN_FILE", "value": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake" }
       ]
     },
     {
       "name": "x64-release",
       "generator": "Ninja",
       "configurationType": "MinSizeRel",
-      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "buildRoot": "${projectDir}\\build\\${name}",
       "installRoot": "${projectDir}\\x64-windows",
-      "cmakeCommandArgs": "",
-      "buildCommandArgs": "",
-      "ctestCommandArgs": "",
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "variables": [
-        {
-          "name": "CMAKE_PREFIX_PATH",
-          "value": "${projectDir}\\x64-windows"
-        }
+        { "name": "VCPKG_TARGET_TRIPLET", "value": "x64-windows-static-md" },
+        { "name": "CMAKE_TOOLCHAIN_FILE", "value": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake" }
       ]
     }
   ]

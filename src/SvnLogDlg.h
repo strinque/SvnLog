@@ -4,50 +4,24 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include "CAutoListCtrl.h"
+#include "CBrowseCtrl.h"
 #include "SvnRepos.h"
+#include "FilteredCommits.h"
 
 // windows message exchanged between thread and gui
-#define WM_POSTMESSAGE      WM_USER + 1
-#define WM_UPDATE_PROGRESS  WM_USER + 2
-
-// result of task execution
-enum result {
-  UNDEFINED,
-  LOAD_FAILURE,
-  LOAD_SUCCESS,
-  SAVE_FAILURE,
-  SAVE_SUCCESS,
-  SCAN_FAILURE,
-  SCAN_SUCCESS,
-  GET_LOGS_FAILURE,
-  GET_LOGS_SUCCESS
-};
+const UINT WM_POST_MESSAGE_QUEUE = RegisterWindowMessage(L"MessagePosted");
+const UINT WM_UPDATE_PROGRESS_BAR = RegisterWindowMessage(L"UpdateProgressBar");
+const UINT WM_BROWSE_CTRL_UPDATE = RegisterWindowMessage(L"FolderSelectionChanged");
 
 // task that can be executed in thread
-enum tasks {
-  UNDEF,
-  LOAD,
-  SAVE,
-  SCAN,
-  GET_LOGS,
-  TERMINATE
-};
-
-class CAutoListCtrl final : public CListCtrl
-{
-public:
-  void AddColumn(const CString& text, uint16_t flag, int size=-1);
-  void Validate();
-
-protected:
-  afx_msg void OnSize(UINT nType, int cx, int cy);
-  DECLARE_MESSAGE_MAP()
-
-private:
-  int GetWidth() const;
-
-private:
-  std::vector<int> m_size;
+enum class Task {
+  Undefined,
+  Load,
+  Save,
+  Scan,
+  GetLogs,
+  Terminate
 };
 
 class CSvnLogDlg : public CDialog
@@ -56,12 +30,7 @@ class CSvnLogDlg : public CDialog
 public:
   // constructor/destructor
   CSvnLogDlg(CWnd* pParent = nullptr);
-  virtual ~CSvnLogDlg();
-
-// Dialog Data
-#ifdef AFX_DESIGN_TIME
-  enum { IDD = IDD_SVNLOG_DIALOG };
-#endif
+  ~CSvnLogDlg();
 
 protected:
   // generated message map functions
@@ -71,8 +40,20 @@ protected:
   afx_msg HCURSOR OnQueryDragIcon();
   afx_msg void OnGetMinMaxInfo(MINMAXINFO* lpMMI);
   afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor);
-  afx_msg void OnPathChange();
+  afx_msg BOOL OnSetCursor(CWnd* pWnd, UINT nHitTest, UINT message);
   afx_msg void OnItemchangedList(NMHDR* pNMHDR, LRESULT* pResult);
+  afx_msg void OnItemClickList(NMHDR* pNMHDR, LRESULT* pResult);
+  afx_msg void OnGetInfoList(NMHDR* pNMHDR, LRESULT* pResult);
+  afx_msg void OnBnClickedButtonRefresh();
+  afx_msg void OnBnClickedCheckFrom();
+  afx_msg void OnBnClickedCheckTo();
+  afx_msg void OnBnClickedCheckProject();
+  afx_msg void OnBnClickedCheckAuthor();
+  afx_msg void OnComboAuthorChanged();
+  afx_msg void OnComboProjectChanged();
+  afx_msg void OnDateFromChanged(NMHDR* pNMHDR, LRESULT* pResult);
+  afx_msg void OnDateToChanged(NMHDR* pNMHDR, LRESULT* pResult);
+  afx_msg LRESULT OnPathChanged(WPARAM wparam, LPARAM lparam);
   afx_msg LRESULT OnUpdateProgress(WPARAM wparam, LPARAM lparam);
   afx_msg LRESULT OnGetPostMessage(WPARAM wparam, LPARAM lparam);
   DECLARE_MESSAGE_MAP()
@@ -80,14 +61,17 @@ protected:
 private:
   // run the thread
   void Run();
-  void Notify(const enum tasks task);
+  void Notify(const enum class Task task);
+
+  // virtual functions
+  void OnOK() override;
 
   // lock/unlock the interface
-  void LockCtrl(const uint32_t id=0);
-  void UnlockCtrl(const uint32_t id=0);
+  void LockCtrl(const std::vector<uint32_t>& handles = {});
+  void UnlockCtrl(const std::vector<uint32_t>& handles = {});
 
   // update mfc controls
-  void UpdateListCtrl();
+  void UpdateGui(const bool update_commits = false);
 
 private:
   // mfc gui parameters
@@ -96,18 +80,26 @@ private:
   CBrush m_editColor;
 
   // mfc controls
-  CMFCEditBrowseCtrl m_path_ctrl;
-  std::wstring m_path;
+  CBrowseCtrl m_path_ctrl;
+  CString m_path;
   CAutoListCtrl m_list_ctrl;
+  CDateTimeCtrl m_date_from;
+  CDateTimeCtrl m_date_to;
+  CComboBox m_combo_project;
+  CComboBox m_combo_author;
   CString m_edit;
   CProgressCtrl m_progress;
+
+  // store, sort and filter commits
+  FilteredCommits m_commits;
 
   // svn repository functions
   SvnRepos m_repos;
 
-  // thread
+  // thread to not lock the gui
   std::thread m_thread;
   std::mutex m_mutex;
   std::condition_variable m_cv;
-  enum tasks m_task;
+  enum class Task m_task;
+  bool m_locked;
 };
