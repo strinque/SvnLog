@@ -4,6 +4,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <stdbool.h>
 #include "CAutoListCtrl.h"
 #include "CBrowseCtrl.h"
 #include "SvnRepos.h"
@@ -100,6 +101,7 @@ private:
   std::thread m_thread;
   std::mutex m_mutex;
   std::condition_variable m_cv;
+  bool m_task_needs_execute;
   enum class Task m_task;
   bool m_locked;
 };

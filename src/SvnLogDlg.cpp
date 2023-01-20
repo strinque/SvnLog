@@ -49,6 +49,7 @@ CSvnLogDlg::CSvnLogDlg(CWnd* pParent)
   m_thread(),
   m_mutex(),
   m_cv(),
+  m_task_needs_execute(),
   m_task(Task::Undefined),
   m_locked(false)
 {
@@ -439,7 +440,8 @@ void CSvnLogDlg::Run()
   while (!terminate)
   {
     // wait for task
-    m_cv.wait(lck);
+    m_cv.wait(lck, [&]{ return m_task_needs_execute; });
+    m_task_needs_execute = false;
 
     // execute request
     bool result = false;
@@ -483,6 +485,7 @@ void CSvnLogDlg::Run()
       break;
 
     default:
+      continue;
       break;
     }
 
@@ -501,6 +504,7 @@ void CSvnLogDlg::Notify(const enum class Task task)
   }
 
   // notify thread to execute task
+  m_task_needs_execute = true;
   m_cv.notify_one();
 }
 
