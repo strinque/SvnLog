@@ -1,33 +1,23 @@
 #pragma once
-#include <map>
-#include <vector>
 #include <string>
+#include <vector>
+#include <set>
+#include <map>
+#include <memory>
+#include <functional>
 #include <stdbool.h>
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 
-// store on svn commit infos
+// store svn commit infos
 struct svn_commit
 {
-public:
-  std::string id;
+  std::string repos;
+  std::string date;
+  int id;
   std::string author;
   std::string files;
-  std::string description;
-  // struct tm time
-};
-
-// store svn commits infos for one repository
-class SvnCommits final
-{
-public:
-  // constructor/destructor
-  SvnCommits();
-  ~SvnCommits();
-
-  // parse svn log output
-  void parse(const std::string& logs);
-
-private:
-  std::vector<struct svn_commit> m_commits;
+  std::string desc;
 };
 
 // store all svn repositories infos
@@ -35,26 +25,37 @@ class SvnRepos final
 {
 public:
   // constructor/destructor
-  SvnRepos();
+  SvnRepos(const std::string& filename = "svn-repos.json");
   ~SvnRepos();
+
+  // load/save svn-repository infos into json database file
+  bool load();
+  bool save();
 
   // scan directory recursively for svn repositories
   bool scan_directory(const std::wstring& path);
 
-  // get the number of svn repositories found
-  std::size_t get_nb_repos() const;
+  // get all the logs - with callback for progression
+  bool get_logs(const std::function<void(std::size_t, std::size_t)>& cb = {});
 
-  // get all the logs
-  void get_logs();
+  // retrieve all the commits
+  const std::set<std::shared_ptr<struct svn_commit>> get_commits() const;
+
+  // retrieve one commit
+  const std::shared_ptr<struct svn_commit> get_commit(const std::string& repos, int id);
 
 private:
   // execute command and read output
   std::string exec(const std::string& cmd);
 
-  // retrieve log of a specific svn repository
-  const std::string get_log(const std::string& repos);
+  // parse svn log output
+  std::vector<std::shared_ptr<struct svn_commit>> parse(const std::string& repos, const std::string& logs);
 
 private:
+  // store repository infos on database
+  std::string m_filename;
+
   // list of repositories and their commits
-  std::map<std::string, SvnCommits> m_repos;
+  std::set<std::shared_ptr<struct svn_commit>> m_commits;
+  std::map<std::string, std::map<int, std::shared_ptr<struct svn_commit>>> m_repos;
 };

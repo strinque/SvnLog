@@ -5,7 +5,6 @@
 #define IDD_SVNLOG_DIALOG               102
 #define IDR_MAINFRAME                   128
 #define IDC_BUTTON_EXPORT               1021
-#define IDC_LIST1                       1022
 #define IDC_LIST                        1022
 #define IDC_EDIT                        1024
 #define IDC_PROGRESS                    1025

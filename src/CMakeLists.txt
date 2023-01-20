@@ -41,6 +41,22 @@ endif()
 # compile executable
 add_executable(${TARGET_MFC} WIN32 ${SOURCE_FILES} ${HEADER_FILES} ${RESOURCE_FILES})
 
+# set the path to the third-party libraries include
+target_include_directories(${TARGET_MFC} PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_PREFIX_PATH}/include>)
+
+# link third-party libraries
+find_package(libutf8 REQUIRED)
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
+  target_link_directories(${TARGET_MFC} PRIVATE "${CMAKE_PREFIX_PATH}/debug/lib")
+  target_link_libraries(${TARGET_MFC} 
+    PRIVATE libutf8d.lib)
+else()
+  target_link_directories(${TARGET_MFC} PRIVATE "${CMAKE_PREFIX_PATH}/lib")
+  target_link_libraries(${TARGET_MFC}
+    PRIVATE libutf8.lib)
+endif()
+
 # fix mfc winmain link issue for mfc unicode program
 set_target_properties(${TARGET_MFC} PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 target_link_options(${TARGET_MFC} PRIVATE "/entry:wWinMainCRTStartup")
