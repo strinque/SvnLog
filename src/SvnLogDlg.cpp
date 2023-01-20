@@ -150,6 +150,7 @@ void CSvnLogDlg::OnPathChange()
 
 LRESULT CSvnLogDlg::OnGetPostMessage(WPARAM wparam, LPARAM lparam)
 {
+  m_repos.get_logs();
   return 0;
 }
 
