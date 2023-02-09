@@ -1,0 +1,19 @@
+{
+  "triplets": [
+    {
+      "name": "x64-windows-static-md",
+      "build-dir": "x64-release",
+      "crt-link": "dynamic",
+      "lib-link": "static",
+      "platform": "v142",
+      "build-type": "release"
+    }
+  ],
+  "ports": [
+    {
+      "name": "winpp",
+      "portfile": "https://raw.githubusercontent.com/strinque/winpp/master/vcpkg/ports/winpp/portfile.cmake",
+      "vcpkg": "https://raw.githubusercontent.com/strinque/winpp/master/vcpkg/ports/winpp/vcpkg.json"
+    }
+  ]
+}

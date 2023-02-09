@@ -5,11 +5,9 @@
       "generator": "Ninja",
       "configurationType": "Debug",
       "buildRoot": "${projectDir}\\build\\${name}",
-      "installRoot": "${projectDir}\\x64-windows\\debug",
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "variables": [
-        { "name": "VCPKG_TARGET_TRIPLET", "value": "x64-windows" },
-        { "name": "CMAKE_TOOLCHAIN_FILE", "value": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake" }
+        { "name": "VCPKG_TARGET_TRIPLET", "value": "x64-windows" }
       ]
     },
     {
@@ -17,11 +15,9 @@
       "generator": "Ninja",
       "configurationType": "MinSizeRel",
       "buildRoot": "${projectDir}\\build\\${name}",
-      "installRoot": "${projectDir}\\x64-windows",
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "variables": [
-        { "name": "VCPKG_TARGET_TRIPLET", "value": "x64-windows-static-md" },
-        { "name": "CMAKE_TOOLCHAIN_FILE", "value": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake" }
+        { "name": "VCPKG_TARGET_TRIPLET", "value": "x64-windows-static-md" }
       ]
     }
   ]

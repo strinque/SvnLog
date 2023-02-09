@@ -2,8 +2,8 @@
     "name": "svnlog",
     "version": "2.3.0",
     "dependencies": [
-        "fmt",
-        "winpp",
-        "nlohmann-json"
+      "fmt",
+      "nlohmann-json",
+      "winpp"
     ]
 }

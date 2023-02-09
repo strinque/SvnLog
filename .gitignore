@@ -1,6 +1,2 @@
 .vs
 build
-x64-windows
-build.py
-vcpkg-config.json
-third-party

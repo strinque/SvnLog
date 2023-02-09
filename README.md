@@ -27,29 +27,27 @@ It also needs the installation of the **winpp**, a private *header-only library*
 ### Install vcpkg
 
 The install procedure can be found in: https://vcpkg.io/en/getting-started.html.  
+The following procedure installs `vcpkg` and integrates it in **Visual Studio**.
 
 Open PowerShell: 
 
 ``` console
 cd c:\
 git clone https://github.com/Microsoft/vcpkg.git
-.\vcpkg\bootstrap-vcpkg.bat
-vcpkg integrate install
+cd vcpkg
+.\bootstrap-vcpkg.bat
+.\vcpkg.exe integrate install
 ```
 
-Create a `VCPKG_ROOT` environment variable which points to this vcpkg directory: 
+Create a `x64-windows-static-md` triplet file used to build the program in *shared-mode* for **Windows CRT** libraries but *static-mode* for third-party libraries:
 
 ``` console
-setx VCPKG_ROOT "c:\vcpkg"
-```
-This environment variable will be used by **Visual Studio** to locate the `vcpkg` directory.
+$VCPKG_DIR = Get-Content "$Env:LocalAppData/vcpkg/vcpkg.path.txt" -Raw 
 
-Create a `x64-windows-static-md` tripplet file used to build the program in shared-mode for **Windows** libraries but static-mode for third-party libraries:
-
-``` console
-Set-Content "$env:VCPKG_ROOT\triplets\community\x64-windows-static-md.cmake" 'set(VCPKG_TARGET_ARCHITECTURE x64)
+Set-Content "$VCPKG_DIR/triplets/community/x64-windows-static-md.cmake" 'set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE dynamic)
-set(VCPKG_LIBRARY_LINKAGE static)'
+set(VCPKG_LIBRARY_LINKAGE static)
+set(VCPKG_BUILD_TYPE release)'
 ```
 
 ### Install winpp ports-files
@@ -57,9 +55,11 @@ set(VCPKG_LIBRARY_LINKAGE static)'
 Copy the *vcpkg ports files* from **winpp** *header-only library* repository to the **vcpkg** directory.
 
 ``` console
-mkdir $env:VCPKG_ROOT\ports\winpp
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/strinque/winpp/master/vcpkg/ports/winpp/portfile.cmake" -OutFile "$env:VCPKG_ROOT\ports\winpp\portfile.cmake"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/strinque/winpp/master/vcpkg/ports/winpp/vcpkg.json" -OutFile "$env:VCPKG_ROOT\ports\winpp\vcpkg.json"
+$VCPKG_DIR = Get-Content "$Env:LocalAppData/vcpkg/vcpkg.path.txt" -Raw 
+
+mkdir $VCPKG_DIR/ports/winpp
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/strinque/winpp/master/vcpkg/ports/winpp/portfile.cmake" -OutFile "$VCPKG_DIR/ports/winpp/portfile.cmake"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/strinque/winpp/master/vcpkg/ports/winpp/vcpkg.json" -OutFile "$VCPKG_DIR/ports/winpp/vcpkg.json"
 ```
 
 ## Build
@@ -69,14 +69,16 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/strinque/winpp/master/
 To build the program with `vcpkg` and `cmake`, follow these steps:
 
 ``` console
+$VCPKG_DIR = Get-Content "$Env:LocalAppData/vcpkg/vcpkg.path.txt" -Raw 
+
 git clone https://github.com/strinque/SvnLog
 cd SvnLog
 mkdir build; cd build
 cmake -DCMAKE_BUILD_TYPE="MinSizeRel" `
       -DVCPKG_TARGET_TRIPLET="x64-windows-static-md" `
-      -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+      -DCMAKE_TOOLCHAIN_FILE="$VCPKG_DIR/scripts/buildsystems/vcpkg.cmake" `
       ../
-cmake --build .
+cmake --build . --config MinSizeRel
 ```
 
 The program executable should be compiled in: `SvnLog\build\src\MinSizeRel\SvnLog.exe`.
