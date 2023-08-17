@@ -11,6 +11,7 @@
 struct commit
 {
   std::string repos;
+  std::string branch;
   std::string url;
   std::time_t date;
   std::string date_str;
@@ -56,10 +57,13 @@ public:
   // retrieve the sorted and filtered commit list
   std::vector<std::shared_ptr<struct commit>> get_commits() const;
   std::shared_ptr<struct commit> get_commit(const int idx) const;
+  std::set<std::string> get_branches() const;
   std::set<std::string> get_projects() const;
   std::set<std::string> get_authors() const;
 
   // set filters properties
+  void enable_filter_branch(const std::string& str);
+  void disable_filter_branch();
   void enable_filter_from(const SYSTEMTIME& st);
   void disable_filter_from();
   void enable_filter_to(const SYSTEMTIME& st);
@@ -78,12 +82,14 @@ private:
 
 private:
   // filters value
+  std::string m_branch;
   std::time_t m_date_from;
   std::time_t m_date_to;
   std::string m_project;
   std::string m_author;
 
   // filters activation
+  bool m_branch_enabled;
   bool m_date_from_enabled;
   bool m_date_to_enabled;
   bool m_project_enabled;
@@ -92,6 +98,7 @@ private:
   // sort commits
   std::set<std::shared_ptr<struct commit>, struct commit_sort> m_sorted;
   std::vector<std::shared_ptr<struct commit>> m_filtered;
+  std::set<std::string> m_branches;
   std::set<std::string> m_projects;
   std::set<std::string> m_authors;
 };

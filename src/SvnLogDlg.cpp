@@ -27,6 +27,7 @@ enum HEADER {
   HEADER_AUTHOR,
   HEADER_PROJECT,
   HEADER_REPOS,
+  HEADER_BRANCH,
   HEADER_REVISION
 };
 
@@ -38,6 +39,7 @@ CSvnLogDlg::CSvnLogDlg(CWnd* pParent)
   m_path_ctrl(WM_BROWSE_CTRL_UPDATE),
   m_path(),
   m_list_ctrl(),
+  m_combo_branch(),
   m_date_from(),
   m_date_to(),
   m_combo_project(),
@@ -72,6 +74,7 @@ void CSvnLogDlg::DoDataExchange(CDataExchange* pDX)
   CDialog::DoDataExchange(pDX);
   DDX_Control(pDX, IDC_MFCEDITBROWSE, m_path_ctrl);
   DDX_Control(pDX, IDC_LIST, m_list_ctrl);
+  DDX_Control(pDX, IDC_COMBO_BRANCH, m_combo_branch);
   DDX_Control(pDX, IDC_DATETIMEPICKER_FROM, m_date_from);
   DDX_Control(pDX, IDC_DATETIMEPICKER_TO, m_date_to);
   DDX_Control(pDX, IDC_COMBO_PROJECT, m_combo_project);
@@ -92,10 +95,12 @@ BEGIN_MESSAGE_MAP(CSvnLogDlg, CDialog)
   ON_NOTIFY(NM_CLICK, IDC_LIST, &CSvnLogDlg::OnItemClickList)
   ON_NOTIFY(LVN_GETDISPINFO, IDC_LIST, &CSvnLogDlg::OnGetInfoList)
   ON_BN_CLICKED(IDC_BUTTON_REFRESH, &CSvnLogDlg::OnBnClickedButtonRefresh)
+  ON_BN_CLICKED(IDC_CHECK_BRANCH, &CSvnLogDlg::OnBnClickedCheckBranch)
   ON_BN_CLICKED(IDC_CHECK_FROM, &CSvnLogDlg::OnBnClickedCheckFrom)
   ON_BN_CLICKED(IDC_CHECK_TO, &CSvnLogDlg::OnBnClickedCheckTo)
   ON_BN_CLICKED(IDC_CHECK_PROJECT, &CSvnLogDlg::OnBnClickedCheckProject)
   ON_BN_CLICKED(IDC_CHECK_AUTHOR, &CSvnLogDlg::OnBnClickedCheckAuthor)
+  ON_CBN_SELENDOK(IDC_COMBO_BRANCH, &CSvnLogDlg::OnComboBranchChanged)
   ON_CBN_SELENDOK(IDC_COMBO_AUTHOR, &CSvnLogDlg::OnComboAuthorChanged)
   ON_CBN_SELENDOK(IDC_COMBO_PROJECT, &CSvnLogDlg::OnComboProjectChanged)
   ON_NOTIFY(DTN_DATETIMECHANGE, IDC_DATETIMEPICKER_FROM, &CSvnLogDlg::OnDateFromChanged)
@@ -120,6 +125,7 @@ BOOL CSvnLogDlg::OnInitDialog()
     {HEADER_AUTHOR, L"Author", LVCFMT_CENTER, 120},
     {HEADER_PROJECT, L"Project Path", LVCFMT_LEFT, LVSCW_AUTOSIZE},
     {HEADER_REPOS, L"Repository Url", LVCFMT_LEFT, 500},
+    {HEADER_BRANCH, L"Branch", LVCFMT_LEFT, 150},
     {HEADER_REVISION, L"Revision", LVCFMT_RIGHT, 55}
   };
   m_list_ctrl.SetHeaders(headers);
@@ -268,6 +274,9 @@ void CSvnLogDlg::OnGetInfoList(NMHDR* pNMHDR, LRESULT* pResult)
     case HEADER_REPOS:
       static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->url), item->cchTextMax));
       break;
+    case HEADER_BRANCH:
+      static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->branch), item->cchTextMax));
+      break;
     case HEADER_REVISION:
       static_cast<void>(lstrcpyn(item->pszText, to_cstring(commit->id_str), item->cchTextMax));
       break;
@@ -280,6 +289,18 @@ void CSvnLogDlg::OnGetInfoList(NMHDR* pNMHDR, LRESULT* pResult)
 void CSvnLogDlg::OnBnClickedButtonRefresh()
 {
   OnPathChanged(0, 0);
+}
+
+void CSvnLogDlg::OnBnClickedCheckBranch()
+{
+  const bool is_checked = (IsDlgButtonChecked(IDC_CHECK_BRANCH) == BST_CHECKED);
+  if (!is_checked)
+  {
+    m_commits.disable_filter_branch();
+    m_combo_branch.SetCurSel(-1);
+  }
+  m_combo_branch.EnableWindow(is_checked);
+  UpdateGui();
 }
 
 void CSvnLogDlg::OnBnClickedCheckFrom()
@@ -334,6 +355,17 @@ void CSvnLogDlg::OnBnClickedCheckAuthor()
   }
   m_combo_author.EnableWindow(is_checked);
   UpdateGui();
+}
+
+void CSvnLogDlg::OnComboBranchChanged()
+{
+  if (m_combo_branch.GetCurSel() != -1)
+  {
+    CString str;
+    m_combo_branch.GetLBText(m_combo_branch.GetCurSel(), str);
+    m_commits.enable_filter_branch(to_string(str));
+    UpdateGui();
+  }
 }
 
 void CSvnLogDlg::OnComboAuthorChanged()
@@ -470,7 +502,7 @@ void CSvnLogDlg::Run()
       {
         static std::size_t old_val = -1;
         const std::size_t val = total ? static_cast<std::size_t>(idx * 100 / total) : 0;
-        if (val != old_val)
+        if (val > old_val)
         {
           ::PostMessage(m_hWnd, WM_UPDATE_PROGRESS_BAR, static_cast<WPARAM>(val), 0);
           old_val = val;
@@ -520,10 +552,14 @@ void CSvnLogDlg::LockCtrl(const std::vector<uint32_t>& handles)
   {
     GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(FALSE);
     GetDlgItem(IDC_BUTTON_REFRESH)->EnableWindow(FALSE);
+    GetDlgItem(IDC_CHECK_BRANCH)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_FROM)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_TO)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_PROJECT)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_AUTHOR)->EnableWindow(FALSE);
+    GetDlgItem(IDC_COMBO_BRANCH)->EnableWindow(FALSE);
+    GetDlgItem(IDC_COMBO_PROJECT)->EnableWindow(FALSE);
+    GetDlgItem(IDC_COMBO_AUTHOR)->EnableWindow(FALSE);
     GetDlgItem(IDC_LIST)->EnableWindow(FALSE);
     GetDlgItem(IDC_EDIT)->EnableWindow(FALSE);
     GetDlgItem(IDC_PROGRESS)->EnableWindow(FALSE);
@@ -542,10 +578,14 @@ void CSvnLogDlg::UnlockCtrl(const std::vector<uint32_t>& handles)
   {
     GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(TRUE);
     GetDlgItem(IDC_BUTTON_REFRESH)->EnableWindow(TRUE);
+    GetDlgItem(IDC_CHECK_BRANCH)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_FROM)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_TO)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_PROJECT)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_AUTHOR)->EnableWindow(TRUE);
+    GetDlgItem(IDC_COMBO_BRANCH)->EnableWindow(TRUE);
+    GetDlgItem(IDC_COMBO_PROJECT)->EnableWindow(TRUE);
+    GetDlgItem(IDC_COMBO_AUTHOR)->EnableWindow(TRUE);
     GetDlgItem(IDC_LIST)->EnableWindow(TRUE);
     GetDlgItem(IDC_EDIT)->EnableWindow(TRUE);
     GetDlgItem(IDC_PROGRESS)->EnableWindow(TRUE);
@@ -566,6 +606,11 @@ void CSvnLogDlg::UpdateGui(const bool update_commits)
   {
     // sort commits
     m_commits.set_commits(m_repos.get_commits());
+
+    // reset branch combobox with all available branches
+    m_combo_branch.ResetContent();
+    for (const auto& b : m_commits.get_branches())
+      m_combo_branch.AddString(to_cstring(b));
 
     // reset project combobox with all available projects
     m_combo_project.ResetContent();

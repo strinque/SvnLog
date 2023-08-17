@@ -16,8 +16,10 @@
 #define IDC_CHECK_FROM                  1032
 #define IDC_CHECK_TO                    1033
 #define IDC_DATETIMEPICKER_TO           1034
+#define IDC_COMBO_BRANCH                1035
 #define IDC_CHECK_PROJECT               1037
 #define IDC_CHECK_AUTHOR                1038
+#define IDC_CHECK_BRANCH                1039
 
 // Next default values for new objects
 // 

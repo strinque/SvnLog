@@ -46,10 +46,12 @@ protected:
   afx_msg void OnItemClickList(NMHDR* pNMHDR, LRESULT* pResult);
   afx_msg void OnGetInfoList(NMHDR* pNMHDR, LRESULT* pResult);
   afx_msg void OnBnClickedButtonRefresh();
+  afx_msg void OnBnClickedCheckBranch();
   afx_msg void OnBnClickedCheckFrom();
   afx_msg void OnBnClickedCheckTo();
   afx_msg void OnBnClickedCheckProject();
   afx_msg void OnBnClickedCheckAuthor();
+  afx_msg void OnComboBranchChanged();
   afx_msg void OnComboAuthorChanged();
   afx_msg void OnComboProjectChanged();
   afx_msg void OnDateFromChanged(NMHDR* pNMHDR, LRESULT* pResult);
@@ -84,6 +86,7 @@ private:
   CBrowseCtrl m_path_ctrl;
   CString m_path;
   CAutoListCtrl m_list_ctrl;
+  CComboBox m_combo_branch;
   CDateTimeCtrl m_date_from;
   CDateTimeCtrl m_date_to;
   CComboBox m_combo_project;

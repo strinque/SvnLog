@@ -7,16 +7,19 @@
 
 // constructor
 FilteredCommits::FilteredCommits() :
+  m_branch(),
   m_date_from(),
   m_date_to(),
   m_project(),
   m_author(),
+  m_branch_enabled(false),
   m_date_from_enabled(false),
   m_date_to_enabled(false),
   m_project_enabled(false),
   m_author_enabled(false),
   m_sorted(),
   m_filtered(),
+  m_branches(),
   m_projects(),
   m_authors()
 {
@@ -33,6 +36,7 @@ void FilteredCommits::set_commits(const std::map<std::string, struct svn_repos>&
   // construct list of sorted commits
   m_sorted.clear();
   m_filtered.clear();
+  m_branches.clear();
   m_projects.clear();
   m_authors.clear();
   for (const auto& r : repos)
@@ -46,10 +50,14 @@ void FilteredCommits::set_commits(const std::map<std::string, struct svn_repos>&
       // add author name
       m_authors.insert(c.second->author);
 
+      // add branch
+      m_branches.insert(c.second->branch);
+
       // add commit information
       m_sorted.insert(std::make_shared<struct commit>(
         commit{ 
           r.first,
+          c.second->branch,
           r.second.url,
           c.second->date,
           DateConverter::to_str(c.second->date),
@@ -75,6 +83,11 @@ std::shared_ptr<struct commit> FilteredCommits::get_commit(const int idx) const
   return m_filtered.at(idx);
 }
 
+std::set<std::string> FilteredCommits::get_branches() const
+{
+  return m_branches;
+}
+
 std::set<std::string> FilteredCommits::get_projects() const
 {
   return m_projects;
@@ -83,6 +96,17 @@ std::set<std::string> FilteredCommits::get_projects() const
 std::set<std::string> FilteredCommits::get_authors() const
 {
   return m_authors;
+}
+
+void FilteredCommits::enable_filter_branch(const std::string& str)
+{
+  m_branch = str;
+  m_branch_enabled = true;
+}
+
+void FilteredCommits::disable_filter_branch()
+{
+  m_branch_enabled = false;
 }
 
 void FilteredCommits::enable_filter_from(const SYSTEMTIME& st)
@@ -143,6 +167,11 @@ void FilteredCommits::filter_commits()
     // apply filter: date_to
     if (m_date_to_enabled &&
       (m_date_to < c->date))
+      continue;
+
+    // apply filter: branch
+    if (m_branch_enabled &&
+      (m_branch != c->branch))
       continue;
 
     // apply filter: project
