@@ -51,9 +51,12 @@ protected:
   afx_msg void OnBnClickedCheckTo();
   afx_msg void OnBnClickedCheckProject();
   afx_msg void OnBnClickedCheckAuthor();
+  afx_msg void OnComboBranchEdited();
+  afx_msg void OnComboProjectEdited();
+  afx_msg void OnComboAuthorEdited();
   afx_msg void OnComboBranchChanged();
-  afx_msg void OnComboAuthorChanged();
   afx_msg void OnComboProjectChanged();
+  afx_msg void OnComboAuthorChanged();
   afx_msg void OnDateFromChanged(NMHDR* pNMHDR, LRESULT* pResult);
   afx_msg void OnDateToChanged(NMHDR* pNMHDR, LRESULT* pResult);
   afx_msg LRESULT OnPathChanged(WPARAM wparam, LPARAM lparam);
@@ -70,11 +73,11 @@ private:
   void OnOK() override;
 
   // lock/unlock the interface
-  void LockCtrl(const std::vector<uint32_t>& handles = {});
+  void LockCtrl(const std::vector<uint32_t>& handles = {}, bool display_wait_cursor = true);
   void UnlockCtrl(const std::vector<uint32_t>& handles = {});
 
   // update mfc controls
-  void UpdateGui(const bool update_commits = false);
+  void UpdateGui(bool reset_controls = false);
 
 private:
   // mfc gui parameters
@@ -86,9 +89,9 @@ private:
   CBrowseCtrl m_path_ctrl;
   CString m_path;
   CAutoListCtrl m_list_ctrl;
-  CComboBox m_combo_branch;
   CDateTimeCtrl m_date_from;
   CDateTimeCtrl m_date_to;
+  CComboBox m_combo_branch;
   CComboBox m_combo_project;
   CComboBox m_combo_author;
   CString m_edit;

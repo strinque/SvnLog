@@ -17,7 +17,8 @@ It uses the `winpp` header-only library from: https://github.com/strinque/winpp.
 - [x] use multi-thread to retrieve informations for each **SVN** repository - display progress with progress-bar
 - [x] store all commits informations into a `json` file
 - [x] differential update: only retrieve commits infos newer than those stored previously
-- [x] multiple filters: `From`, `To`, `Project Path`, `Author`
+- [x] date filters: `From`, `To`
+- [x] regex filters:  `Branch`, `Project Path`, `Author`
 
 ## Requirements
 

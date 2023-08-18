@@ -3,6 +3,7 @@
 #include "SvnLog.h"
 #include "SvnLogDlg.h"
 #include "afxdialogex.h"
+#include <filesystem>
 
 // include flat design manifest
 #pragma comment(linker,"\"/manifestdependency:type='win32' \
@@ -39,9 +40,9 @@ CSvnLogDlg::CSvnLogDlg(CWnd* pParent)
   m_path_ctrl(WM_BROWSE_CTRL_UPDATE),
   m_path(),
   m_list_ctrl(),
-  m_combo_branch(),
   m_date_from(),
   m_date_to(),
+  m_combo_branch(),
   m_combo_project(),
   m_combo_author(),
   m_edit(),
@@ -74,9 +75,9 @@ void CSvnLogDlg::DoDataExchange(CDataExchange* pDX)
   CDialog::DoDataExchange(pDX);
   DDX_Control(pDX, IDC_MFCEDITBROWSE, m_path_ctrl);
   DDX_Control(pDX, IDC_LIST, m_list_ctrl);
-  DDX_Control(pDX, IDC_COMBO_BRANCH, m_combo_branch);
   DDX_Control(pDX, IDC_DATETIMEPICKER_FROM, m_date_from);
   DDX_Control(pDX, IDC_DATETIMEPICKER_TO, m_date_to);
+  DDX_Control(pDX, IDC_COMBO_BRANCH, m_combo_branch);
   DDX_Control(pDX, IDC_COMBO_PROJECT, m_combo_project);
   DDX_Control(pDX, IDC_COMBO_AUTHOR, m_combo_author);
   DDX_Text(pDX, IDC_EDIT, m_edit);
@@ -100,9 +101,12 @@ BEGIN_MESSAGE_MAP(CSvnLogDlg, CDialog)
   ON_BN_CLICKED(IDC_CHECK_TO, &CSvnLogDlg::OnBnClickedCheckTo)
   ON_BN_CLICKED(IDC_CHECK_PROJECT, &CSvnLogDlg::OnBnClickedCheckProject)
   ON_BN_CLICKED(IDC_CHECK_AUTHOR, &CSvnLogDlg::OnBnClickedCheckAuthor)
+  ON_CBN_KILLFOCUS(IDC_COMBO_BRANCH, &CSvnLogDlg::OnComboBranchEdited)
+  ON_CBN_KILLFOCUS(IDC_COMBO_PROJECT, &CSvnLogDlg::OnComboProjectEdited)
+  ON_CBN_KILLFOCUS(IDC_COMBO_AUTHOR, &CSvnLogDlg::OnComboAuthorEdited)
   ON_CBN_SELENDOK(IDC_COMBO_BRANCH, &CSvnLogDlg::OnComboBranchChanged)
-  ON_CBN_SELENDOK(IDC_COMBO_AUTHOR, &CSvnLogDlg::OnComboAuthorChanged)
   ON_CBN_SELENDOK(IDC_COMBO_PROJECT, &CSvnLogDlg::OnComboProjectChanged)
+  ON_CBN_SELENDOK(IDC_COMBO_AUTHOR, &CSvnLogDlg::OnComboAuthorChanged)
   ON_NOTIFY(DTN_DATETIMECHANGE, IDC_DATETIMEPICKER_FROM, &CSvnLogDlg::OnDateFromChanged)
   ON_NOTIFY(DTN_DATETIMECHANGE, IDC_DATETIMEPICKER_TO, &CSvnLogDlg::OnDateToChanged)
   ON_REGISTERED_MESSAGE(WM_BROWSE_CTRL_UPDATE, &CSvnLogDlg::OnPathChanged)
@@ -357,6 +361,39 @@ void CSvnLogDlg::OnBnClickedCheckAuthor()
   UpdateGui();
 }
 
+void CSvnLogDlg::OnComboBranchEdited()
+{
+  CString str;
+  m_combo_branch.GetWindowTextW(str);
+  if (!str.IsEmpty())
+  {
+    m_commits.enable_filter_branch(to_string(str));
+    UpdateGui();
+  }
+}
+
+void CSvnLogDlg::OnComboProjectEdited()
+{
+  CString str;
+  m_combo_project.GetWindowTextW(str);
+  if (!str.IsEmpty())
+  {
+    m_commits.enable_filter_project(to_string(str));
+    UpdateGui();
+  }
+}
+
+void CSvnLogDlg::OnComboAuthorEdited()
+{
+  CString str;
+  m_combo_author.GetWindowTextW(str);
+  if (!str.IsEmpty())
+  {
+    m_commits.enable_filter_author(to_string(str));
+    UpdateGui();
+  }
+}
+
 void CSvnLogDlg::OnComboBranchChanged()
 {
   if (m_combo_branch.GetCurSel() != -1)
@@ -368,17 +405,6 @@ void CSvnLogDlg::OnComboBranchChanged()
   }
 }
 
-void CSvnLogDlg::OnComboAuthorChanged()
-{
-  if (m_combo_author.GetCurSel() != -1)
-  {
-    CString str;
-    m_combo_author.GetLBText(m_combo_author.GetCurSel(), str);
-    m_commits.enable_filter_author(to_string(str));
-    UpdateGui();
-  }
-}
-
 void CSvnLogDlg::OnComboProjectChanged()
 {
   if (m_combo_project.GetCurSel() != -1)
@@ -386,6 +412,17 @@ void CSvnLogDlg::OnComboProjectChanged()
     CString str;
     m_combo_project.GetLBText(m_combo_project.GetCurSel(), str);
     m_commits.enable_filter_project(to_string(str));
+    UpdateGui();
+  }
+}
+
+void CSvnLogDlg::OnComboAuthorChanged()
+{
+  if (m_combo_author.GetCurSel() != -1)
+  {
+    CString str;
+    m_combo_author.GetLBText(m_combo_author.GetCurSel(), str);
+    m_commits.enable_filter_author(to_string(str));
     UpdateGui();
   }
 }
@@ -414,10 +451,13 @@ LRESULT CSvnLogDlg::OnPathChanged(WPARAM wparam, LPARAM lparam)
 
   // retrieve path from control
   m_path_ctrl.GetWindowText(m_path);
-
-  // notify thread to begin scan
-  LockCtrl();
-  Notify(Task::Scan);
+  if (!m_path.IsEmpty() &&
+      std::filesystem::is_directory(m_path.GetString()))
+  {
+    // notify thread to begin scan
+    LockCtrl();
+    Notify(Task::Scan);
+  }
   return 0;
 }
 
@@ -542,19 +582,23 @@ void CSvnLogDlg::Notify(const enum class Task task)
 
 void CSvnLogDlg::OnOK()
 {
-  OnPathChanged(0, 0);
+  // avoid closing the dialog
+  //  force the killfocus event on the previous selected control
+  NextDlgCtrl();
+  PrevDlgCtrl();
 }
 
-void CSvnLogDlg::LockCtrl(const std::vector<uint32_t>& handles)
+void CSvnLogDlg::LockCtrl(const std::vector<uint32_t>& handles, bool display_wait_cursor)
 {
-  m_locked = true;
+  if(display_wait_cursor)
+    m_locked = true;
   if (handles.empty())
   {
     GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(FALSE);
     GetDlgItem(IDC_BUTTON_REFRESH)->EnableWindow(FALSE);
-    GetDlgItem(IDC_CHECK_BRANCH)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_FROM)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_TO)->EnableWindow(FALSE);
+    GetDlgItem(IDC_CHECK_BRANCH)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_PROJECT)->EnableWindow(FALSE);
     GetDlgItem(IDC_CHECK_AUTHOR)->EnableWindow(FALSE);
     GetDlgItem(IDC_COMBO_BRANCH)->EnableWindow(FALSE);
@@ -578,14 +622,17 @@ void CSvnLogDlg::UnlockCtrl(const std::vector<uint32_t>& handles)
   {
     GetDlgItem(IDC_MFCEDITBROWSE)->EnableWindow(TRUE);
     GetDlgItem(IDC_BUTTON_REFRESH)->EnableWindow(TRUE);
-    GetDlgItem(IDC_CHECK_BRANCH)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_FROM)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_TO)->EnableWindow(TRUE);
+    GetDlgItem(IDC_CHECK_BRANCH)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_PROJECT)->EnableWindow(TRUE);
     GetDlgItem(IDC_CHECK_AUTHOR)->EnableWindow(TRUE);
-    GetDlgItem(IDC_COMBO_BRANCH)->EnableWindow(TRUE);
-    GetDlgItem(IDC_COMBO_PROJECT)->EnableWindow(TRUE);
-    GetDlgItem(IDC_COMBO_AUTHOR)->EnableWindow(TRUE);
+    if (IsDlgButtonChecked(IDC_CHECK_BRANCH) == BST_CHECKED)
+      GetDlgItem(IDC_COMBO_BRANCH)->EnableWindow(TRUE);
+    if (IsDlgButtonChecked(IDC_CHECK_PROJECT) == BST_CHECKED) 
+      GetDlgItem(IDC_COMBO_PROJECT)->EnableWindow(TRUE);
+    if (IsDlgButtonChecked(IDC_CHECK_AUTHOR) == BST_CHECKED)
+      GetDlgItem(IDC_COMBO_AUTHOR)->EnableWindow(TRUE);
     GetDlgItem(IDC_LIST)->EnableWindow(TRUE);
     GetDlgItem(IDC_EDIT)->EnableWindow(TRUE);
     GetDlgItem(IDC_PROGRESS)->EnableWindow(TRUE);
@@ -597,13 +644,33 @@ void CSvnLogDlg::UnlockCtrl(const std::vector<uint32_t>& handles)
   }
 }
 
-void CSvnLogDlg::UpdateGui(const bool update_commits)
+void CSvnLogDlg::UpdateGui(bool reset_controls)
 {
   // sort and filter commits - disable redraw CListCtrl between updates
   m_list_ctrl.SetRedraw(false);
   m_list_ctrl.DeleteAllItems();
-  if (update_commits)
+  if (reset_controls)
   {
+    // reset all controls
+    static_cast<CButton*>(GetDlgItem(IDC_CHECK_FROM))->SetCheck(BST_UNCHECKED);
+    static_cast<CButton*>(GetDlgItem(IDC_CHECK_TO))->SetCheck(BST_UNCHECKED);
+    static_cast<CButton*>(GetDlgItem(IDC_CHECK_BRANCH))->SetCheck(BST_UNCHECKED);
+    static_cast<CButton*>(GetDlgItem(IDC_CHECK_PROJECT))->SetCheck(BST_UNCHECKED);
+    static_cast<CButton*>(GetDlgItem(IDC_CHECK_AUTHOR))->SetCheck(BST_UNCHECKED);
+    LockCtrl({IDC_DATETIMEPICKER_FROM, 
+              IDC_DATETIMEPICKER_TO,
+              IDC_COMBO_BRANCH, 
+              IDC_COMBO_PROJECT, 
+              IDC_COMBO_AUTHOR},
+             false);
+
+    // disable all filters
+    m_commits.disable_filter_from();
+    m_commits.disable_filter_to();
+    m_commits.disable_filter_branch();
+    m_commits.disable_filter_project();
+    m_commits.disable_filter_author();
+
     // sort commits
     m_commits.set_commits(m_repos.get_commits());
 

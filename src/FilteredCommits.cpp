@@ -3,6 +3,7 @@
 #include "DateConverter.h"
 #include "FilteredCommits.h"
 #include <fmt/core.h>
+#include <filesystem>
 #include <regex>
 
 // constructor
@@ -155,6 +156,13 @@ void FilteredCommits::disable_filter_author()
 
 void FilteredCommits::filter_commits()
 {
+  // convert from std::string to regex filters
+  const std::regex& r_branch = std::regex(m_branch);
+  const std::regex& r_project = std::filesystem::is_directory(m_project) ?
+      std::regex(std::regex_replace(m_project, std::regex(R"(\\)"), "\\\\") + "$") :
+      std::regex(m_project);
+  const std::regex& r_author = std::regex(m_author);
+
   // construct list of sorted and filtered commits
   m_filtered.clear();
   for (const auto& c : m_sorted)
@@ -169,23 +177,29 @@ void FilteredCommits::filter_commits()
       (m_date_to < c->date))
       continue;
 
-    // apply filter: branch
-    if (m_branch_enabled &&
-      (m_branch != c->branch))
-      continue;
+    try
+    {
+      // apply regex-filter: branch
+      if (m_branch_enabled &&
+        !std::regex_search(c->branch, r_branch))
+        continue;
 
-    // apply filter: project
-    if (m_project_enabled &&
-      (m_project != c->repos))
-      continue;
+      // apply regex-filter: project
+      if (m_project_enabled &&
+        !std::regex_search(c->repos, r_project))
+        continue;
 
-    // apply filter: author
-    if (m_author_enabled &&
-      (m_author != c->author))
-      continue;
+      // apply regex-filter: author
+      if (m_author_enabled &&
+        !std::regex_search(c->author, r_author))
+        continue;
 
-    // add the filtered commit
-    m_filtered.push_back(c);
+      // add the filtered commit
+      m_filtered.push_back(c);
+    }
+    catch (...)
+    {
+    }
   }
 }
 
